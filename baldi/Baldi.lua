@@ -4,7 +4,7 @@ local function A(n)local r="bw/"..n if not isfile(r)then local ok,data=pcall(fun
 local SHEET=A("BaldiSlap_Sheet.png")
 local FW,FH=142,256
 local SFX=A("slap.wav")
-local TILE,JUMP,INT,SIZE=4,1.5,1.0,90
+local TILE,JUMP,INT,SIZE=4,2.0,0.6,90
 local SIZESCALE=160
 local MINPX,MAXPX=30,1100
 local WORLD_H=6.5
@@ -278,7 +278,7 @@ local function draw(dt)
     end
   end
   if B.fx>=0 then
-    B.fx=B.fx+dt*13
+    B.fx=B.fx+dt*16
     local i=math.floor(B.fx)
     if i>=5 then
       B.fx=-1
