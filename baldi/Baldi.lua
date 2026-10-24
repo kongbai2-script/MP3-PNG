@@ -1,5 +1,5 @@
 local P=game:GetService("Players")local R=game:GetService("RunService")local W=game:GetService("Workspace")local LP=P.LocalPlayer local CAM=W.CurrentCamera
-local BASE="https://raw.githubusercontent.com/kongbai2-script/MP3-PNG/main/baldi/"
+local BASE="https://cdn.jsdelivr.net/gh/kongbai2-script/MP3-PNG@main/baldi/"
 local function A(n)local r="bw/"..n if not isfile(r)then local ok,data=pcall(function()return game:HttpGet(BASE..n)end)if ok and data and #data>0 then pcall(function()writefile(r,data)end)end end if not isfile(r)then return""end local o,d=pcall(getcustomasset,r)return(o and type(d)=="string")and d or""end
 local SHEET=A("BaldiSlap_Sheet.png")
 local FW,FH=142,256
