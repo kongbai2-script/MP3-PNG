@@ -1,4 +1,3 @@
--- Baldi 射线探路版：完全不依赖 PathfindingService
 local P=game:GetService("Players")local R=game:GetService("RunService")local W=game:GetService("Workspace")local LP=P.LocalPlayer local CAM=W.CurrentCamera
 local BASE="https://raw.githubusercontent.com/kongbai2-script/MP3-PNG/main/baldi/"
 local function A(n)local r="bw/"..n if not isfile(r)then local ok,data=pcall(function()return game:HttpGet(BASE..n)end)if ok and data and #data>0 then pcall(function()writefile(r,data)end)end end if not isfile(r)then return""end local o,d=pcall(getcustomasset,r)return(o and type(d)=="string")and d or""end
@@ -45,12 +44,6 @@ local function ppos()
   local r=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
   return r and r.Position
 end
--- ============================================================
--- 局部网格 A* 寻路
--- 改写自 Jumper/jumper/search/astar.lua
--- (Nash A. & al., aigamedev.com/open/tutorials/theta-star-any-angle-paths)
--- 改动: 目标不可达时返回最优近似路径; 可通行性懒加载
--- ============================================================
 local GRID=4
 local MAX_ITER=600
 local SQRT2=1.41421356
@@ -151,7 +144,6 @@ local function astar(sx,sz,gx,gz)
   if #path<2 then return nil end
   return path
 end
--- 求到目标的世界坐标路径
 local function findPath(from,to)
   GRIDSTATE.origin=from
   GRIDSTATE.cache={}
@@ -206,7 +198,6 @@ local function moveToward(target)
   local before=B.pos
   local path=findPath(B.pos,target)
   if not path then
-    -- A* 失败：朝目标直冲一步
     local d=target-B.pos
     d=Vector3.new(d.X,0,d.Z)
     if d.Magnitude>1e-3 then
@@ -215,7 +206,6 @@ local function moveToward(target)
     end
     return(B.pos-before).Magnitude>0.2
   end
-  -- 沿路径推进 TILE*JUMP
   local remain=TILE*JUMP
   local cur=B.pos
   for _,w in ipairs(path) do
