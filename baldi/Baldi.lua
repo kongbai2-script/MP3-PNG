@@ -10,8 +10,6 @@ local SIZESCALE=160
 local MINPX,MAXPX=30,1100
 local WORLD_H=6.5
 local MAXDIST=350
-local STEPH=TILE*0.8
-local DIRS=16
 local B={pos=Vector3.zero,slapT=0,fx=-1,hit=true,lastPos=Vector3.zero,tries=0}
 local GUI,ROOT,IMG,SOUND
 do
@@ -47,49 +45,127 @@ local function ppos()
   local r=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
   return r and r.Position
 end
--- 检测从 from 走到 to 是否可行（不撞墙 + 有地面）
-local function canGo(from,to)
-  local gh=ground(to)
-  if not gh then return false end
-  if math.abs(to.Y-gh.Y)>2.5 then
-    if gh.Y>to.Y+0.5 then return false end
-  end
-  local rp=RaycastParams.new()
-  rp.FilterType=Enum.RaycastFilterType.Exclude
-  rp.FilterDescendantsInstances={LP.Character,CAM}
-  local a=Vector3.new(from.X,gh.Y+2,from.Z)
-  local d=to-from
-  local flat=Vector3.new(d.X,0,d.Z)
-  if flat.Magnitude<1e-3 then return true end
-  local h=W:Raycast(a,flat,rp)
-  return h==nil
+-- ============================================================
+-- 局部网格 A* 寻路
+-- 改写自 Jumper/jumper/search/astar.lua
+-- (Nash A. & al., aigamedev.com/open/tutorials/theta-star-any-angle-paths)
+-- 改动: 目标不可达时返回最优近似路径; 可通行性懒加载
+-- ============================================================
+local GRID=4
+local MAX_ITER=600
+local SQRT2=1.41421356
+local function newHeap()
+  local a,n={},0
+  local function less(i,j) return a[i].f<a[j].f end
+  local function swap(i,j) a[i],a[j]=a[j],a[i] end
+  local function up(i) while i>1 do local p=i//2 if less(i,p) then swap(i,p) i=p else break end end end
+  local function down(i) while true do local l,r,s=i*2,i*2+1,i if l<=n and less(l,s) then s=l end if r<=n and less(r,s) then s=r end if s==i then break end swap(i,s) i=s end end
+  return{
+    push=function(v) n=n+1 a[n]=v up(n) end,
+    pop=function() if n==0 then return nil end local t=a[1] a[1]=a[n] a[n]=nil n=n-1 if n>0 then down(1) end return t end,
+    empty=function() return n==0 end,
+  }
 end
--- 用射线找最接近目标方向的可走方向
-local function pickDir(target)
-  local d=target-B.pos
-  d=Vector3.new(d.X,0,d.Z)
-  if d.Magnitude<1e-3 then return nil end
-  local base=math.atan2(d.Z,d.X)
-  local best,bestScore=nil,-1e9
-  for i=0,DIRS-1 do
-    local a=base+(i%2==0 and 1 or -1)*math.floor((i+1)/2)*(math.pi*2/DIRS)
-    local dir=Vector3.new(math.cos(a),0,math.sin(a))
-    local to=B.pos+dir*STEPH
-    local gh=ground(to)
-    if gh then
-      local rp=RaycastParams.new()
-      rp.FilterType=Enum.RaycastFilterType.Exclude
-      rp.FilterDescendantsInstances={LP.Character,CAM}
-      local h=W:Raycast(Vector3.new(B.pos.X,gh.Y+2,B.pos.Z),Vector3.new(dir.X,0,dir.Z)*STEPH,rp)
-      if not h then
-        local score=dir:Dot(d.Unit)
-        if gh.Y>B.pos.Y+0.5 then score=score-2 end
-        if gh.Y<B.pos.Y-4 then score=score-3 end
-        if score>bestScore then bestScore,best=score,to end
+local RAY=RaycastParams.new()
+RAY.FilterType=Enum.RaycastFilterType.Exclude
+local function rayGround(p)
+  RAY.FilterDescendantsInstances={LP.Character,CAM}
+  local h=W:Raycast(p+Vector3.new(0,8,0),Vector3.new(0,-40,0),RAY)
+  return h and h.Position or nil
+end
+local GRIDSTATE={origin=Vector3.zero,cache={},nodes={}}
+local function cellOf(pos)
+  local o=GRIDSTATE.origin
+  return math.floor((pos.X-o.X)/GRID+0.5),math.floor((pos.Z-o.Z)/GRID+0.5)
+end
+local function worldOf(cx,cz)
+  local o=GRIDSTATE.origin
+  return rayGround(o+Vector3.new(cx*GRID,0,cz*GRID))
+end
+local function walkable(cx,cz)
+  local k=cx*100000+cz
+  local v=GRIDSTATE.cache[k]
+  if v~=nil then return v end
+  local wp=worldOf(cx,cz)
+  if not wp then GRIDSTATE.cache[k]=false return false end
+  local o=GRIDSTATE.origin
+  local a=Vector3.new(o.X,wp.Y+2.5,o.Z)
+  local b=Vector3.new(wp.X,wp.Y+2.5,wp.Z)
+  RAY.FilterDescendantsInstances={LP.Character,CAM}
+  local h=W:Raycast(a,b-a,RAY)
+  local ok=(h==nil)
+  GRIDSTATE.cache[k]=ok
+  return ok
+end
+local function gnode(cx,cz)
+  local k=cx*100000+cz
+  local n=GRIDSTATE.nodes[k]
+  if not n then
+    n={x=cx,z=cz,g=math.huge,h=0,f=0,parent=nil,closed=false}
+    GRIDSTATE.nodes[k]=n
+  end
+  return n
+end
+local function astar(sx,sz,gx,gz)
+  local open=newHeap()
+  local st=gnode(sx,sz)
+  st.g=0
+  st.h=math.sqrt((gx-sx)^2+(gz-sz)^2)
+  st.f=st.h
+  open.push(st)
+  local best,bestH=st,st.h
+  local iter=0
+  while not open.empty() and iter<MAX_ITER do
+    iter=iter+1
+    local cur=open.pop()
+    if not cur.closed then
+      cur.closed=true
+      if cur.h<bestH then best,bestH=cur,cur.h end
+      if cur.x==gx and cur.z==gz then best=cur break end
+      for dx=-1,1 do
+        for dz=-1,1 do
+          if dx~=0 or dz~=0 then
+            local nx,nz=cur.x+dx,cur.z+dz
+            if walkable(nx,nz) then
+              local nb=gnode(nx,nz)
+              if not nb.closed then
+                local stp=(dx~=0 and dz~=0) and SQRT2 or 1
+                local ng=cur.g+stp
+                if ng<nb.g then
+                  nb.g=ng
+                  nb.parent=cur
+                  nb.h=math.sqrt((gx-nx)^2+(gz-nz)^2)
+                  nb.f=nb.g+nb.h
+                  open.push(nb)
+                end
+              end
+            end
+          end
+        end
       end
     end
   end
-  return best
+  local path={}
+  local n=best
+  while n do table.insert(path,1,{x=n.x,z=n.z}) n=n.parent end
+  if #path<2 then return nil end
+  return path
+end
+-- 求到目标的世界坐标路径
+local function findPath(from,to)
+  GRIDSTATE.origin=from
+  GRIDSTATE.cache={}
+  GRIDSTATE.nodes={}
+  local sx,sz=0,0
+  local gx,gz=cellOf(to)
+  local path=astar(sx,sz,gx,gz)
+  if not path then return nil end
+  local wp={}
+  for i=2,#path do
+    local w=worldOf(path[i].x,path[i].z)
+    if w then table.insert(wp,w) end
+  end
+  return wp
 end
 local function front(n)
   local cf=CAM.CFrame
@@ -128,13 +204,36 @@ local function los(t)
 end
 local function moveToward(target)
   local before=B.pos
-  for s=1,3 do
-    local d=(B.pos-target).Magnitude
-    if d<TILE*1.0 then break end
-    local nxt=pickDir(target)
-    if not nxt then break end
-    if (nxt-target).Magnitude>d-TILE*0.2 then break end
-    B.pos=nxt
+  local path=findPath(B.pos,target)
+  if not path then
+    -- A* 失败：朝目标直冲一步
+    local d=target-B.pos
+    d=Vector3.new(d.X,0,d.Z)
+    if d.Magnitude>1e-3 then
+      local gh=ground(B.pos+d.Unit*TILE*JUMP)
+      if gh then B.pos=gh end
+    end
+    return(B.pos-before).Magnitude>0.2
+  end
+  -- 沿路径推进 TILE*JUMP
+  local remain=TILE*JUMP
+  local cur=B.pos
+  for _,w in ipairs(path) do
+    local seg=w-cur
+    local m=seg.Magnitude
+    if m<1e-3 then
+      cur=w
+    elseif m<=remain then
+      cur=w
+      remain=remain-m
+      B.pos=w
+      if remain<=0 then break end
+    else
+      local nxt=cur+seg.Unit*remain
+      B.pos=nxt
+      remain=0
+      break
+    end
   end
   return(B.pos-before).Magnitude>0.2
 end
