@@ -246,9 +246,28 @@ local function upd(dt)
   B.slapT=B.slapT+dt
   if B.slapT>=INT then B.slapT=0 B.fx=0 B.hit=false end
 end
+local LOS=RaycastParams.new()
+LOS.FilterType=Enum.RaycastFilterType.Exclude
+B.vis=true
+B.visTick=0
+local function visible(pos)
+  local camPos=CAM.CFrame.Position
+  local target=pos+Vector3.new(0,WORLD_H*0.5,0)
+  local d=target-camPos
+  local dist=d.Magnitude
+  if dist<1 then return true end
+  LOS.FilterDescendantsInstances={LP.Character,CAM}
+  local h=W:Raycast(camPos,d,LOS)
+  if not h then return true end
+  return h.Distance>=dist-0.8
+end
 local function draw(dt)
+  B.visTick=B.visTick+1
+  if B.visTick%3==0 then
+    B.vis=visible(B.pos)
+  end
   local sp,on=CAM:WorldToViewportPoint(B.pos)
-  if not on or sp.Z<=0 or sp.Z>MAXDIST then
+  if not B.vis or not on or sp.Z<=0 or sp.Z>MAXDIST then
     ROOT.Visible=false
     B.dbg=(B.dbg or 0)+1
     if B.dbg%20==0 then
